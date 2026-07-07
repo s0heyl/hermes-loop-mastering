@@ -1,0 +1,14 @@
+[
+  {
+    "id": "feature-001",
+    "category": "functional",
+    "description": "Describe one user-observable behavior.",
+    "steps": [
+      "User or system action to perform",
+      "Expected observable result",
+      "Verification method"
+    ],
+    "passes": false,
+    "evidence": ""
+  }
+]

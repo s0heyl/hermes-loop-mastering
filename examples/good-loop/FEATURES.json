@@ -1,0 +1,14 @@
+[
+  {
+    "id": "feature-001",
+    "category": "functional",
+    "description": "Greeting helper trims names and falls back for blanks.",
+    "steps": [
+      "Call helper with padded name",
+      "Call helper with whitespace-only name",
+      "Run targeted regression tests"
+    ],
+    "passes": true,
+    "evidence": "python3 -m pytest tests/test_greeting.py -q"
+  }
+]
