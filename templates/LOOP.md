@@ -1,3 +1,6 @@
+---
+contract_version: 1.0
+---
 # Loop State
 
 ## Goal

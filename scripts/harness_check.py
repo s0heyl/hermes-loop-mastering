@@ -11,28 +11,12 @@ import re
 import sys
 from pathlib import Path
 
-REQUIRED_LOOP_SECTIONS = [
-    "## Goal",
-    "## Done When",
-    "## Non-Goals",
-    "## Never Touch",
-    "## Stop If",
-    "## Plan",
-    "## Evidence Log",
-]
-
-REQUIRED_REVIEW_CHECKS = [
-    "Off-spec implementation checked",
-    "Relaxed tests checked",
-    "Stub success checked",
-    "Swallowed errors checked",
-    "Happy-path only checked",
-    "Invented API checked",
-    "Scope creep checked",
-    "Secret leak checked",
-    "Generated noise checked",
-    "Unproven done checked",
-]
+from artifact_contract import (
+    EVIDENCE_HEADER,
+    REQUIRED_HANDOFF_SECTIONS,
+    REQUIRED_LOOP_SECTIONS,
+    REQUIRED_REVIEW_CHECKS,
+)
 
 SECRET_PATTERNS = [
     re.compile(r"gho_[A-Za-z0-9_]{20,}"),
@@ -79,7 +63,7 @@ def main() -> int:
     else:
         issues.append("LOOP.md Done When has no checkbox conditions")
 
-    if "| Time | Command / Check | Result | Notes |" in loop and re.search(r"\|\s*[^|]+\s*\|\s*`?[^|`]+`?\s*\|\s*(pass|ok|success|fail|blocked|skipped)", loop, re.I):
+    if EVIDENCE_HEADER in loop and re.search(r"\|\s*[^|]+\s*\|\s*`?[^|`]+`?\s*\|\s*(pass|ok|success|fail|blocked|skipped)", loop, re.I):
         score += 1
     else:
         issues.append("LOOP.md Evidence Log has no concrete command/check result")
@@ -89,8 +73,8 @@ def main() -> int:
     else:
         issues.append("LOOP.md Active Slice is empty")
 
-    max_score += 5
-    for section in ["## Status", "## What Changed", "## Evidence", "## Open Risks", "## Next Recommended Step"]:
+    max_score += len(REQUIRED_HANDOFF_SECTIONS)
+    for section in REQUIRED_HANDOFF_SECTIONS:
         if section in handoff:
             score += 1
         else:

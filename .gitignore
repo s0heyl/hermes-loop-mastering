@@ -15,6 +15,7 @@ npm-debug.log*
 
 # Local Hermes/task state
 .hermes-local/
+.hermes-loop/
 *.local.md
 
 # Secrets

@@ -94,10 +94,16 @@ Completion criterion: you can name the files likely to change, the verification 
 Create or update `.hermes-loop/LOOP.md` with this minimum contract:
 
 ```markdown
+---
+contract_version: 1.0
+---
 # Loop State
 
 ## Goal
 <one sentence>
+
+## Classification
+<tiny | standard | critical>
 
 ## Done When
 - [ ] <observable/checkable condition>
@@ -117,10 +123,19 @@ Create or update `.hermes-loop/LOOP.md` with this minimum contract:
 - [ ] <step 2>
 - [ ] <step 3>
 
+## Active Slice
+<the one exact slice currently being implemented>
+
 ## Evidence Log
 | Time | Command / Check | Result | Notes |
 |---|---|---|---|
+
+## Decisions
+| Decision | Reason | Date |
+|---|---|---|
 ```
+
+The canonical values live in `scripts/artifact_contract.py`; the template and harness import or mirror this contract. When changing the artifact shape, update the contract, template, skill example, and tests in the same slice.
 
 Rules:
 
