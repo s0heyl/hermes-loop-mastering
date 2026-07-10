@@ -78,13 +78,19 @@ def main() -> int:
         "api_key=",
         "BEGIN PRIVATE KEY",
         "gho_",
-        "sk-",
         "PRIVATE_PROJECT_NAME_PLACEHOLDER_SHOULD_NOT_APPEAR",
     ]
     lowered = text.lower()
     for needle in forbidden:
         if needle.lower() in lowered:
             fail(f"forbidden/private pattern found: {needle}")
+
+    secret_patterns = [
+        re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
+    ]
+    for pattern in secret_patterns:
+        if pattern.search(text):
+            fail(f"possible secret pattern found: {pattern.pattern}")
 
     local_path_patterns = [
         r"/home/[^\s/]+/[^\s]+",

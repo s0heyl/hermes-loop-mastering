@@ -1,54 +1,91 @@
 #!/usr/bin/env python3
 """Score Hermes Loop Master artifacts in a project directory.
 
-This is intentionally lightweight: it checks for durable loop files and
-verification evidence. It does not claim to prove code correctness.
+The harness validates the public artifact contract and, for Critical mode,
+requires recorded behavioral evidence. It never executes commands copied from
+artifacts; callers must run real verification separately.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import re
-import sys
 from pathlib import Path
 
 from artifact_contract import (
+    CONTRACT_VERSION,
     EVIDENCE_HEADER,
+    MODE_REQUIREMENTS,
     REQUIRED_HANDOFF_SECTIONS,
     REQUIRED_LOOP_SECTIONS,
     REQUIRED_REVIEW_CHECKS,
 )
 
 SECRET_PATTERNS = [
-    re.compile(r"gho_[A-Za-z0-9_]{20,}"),
-    re.compile(r"sk-[A-Za-z0-9]{20,}"),
+    re.compile(r"\bgho_[A-Za-z0-9_]{20,}\b"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
-    re.compile(r"(?i)(api[_-]?key|secret|password|token)\s*=\s*['\"]?[^\s'\"]{12,}"),
+    re.compile(
+        r"(?i)(api[_-]?key|secret|password|token)\s*=\s*['\"]?[^\s'\"]{12,}"
+    ),
 ]
+
+BEHAVIORAL_GATES = {
+    "positive path": ("positive path",),
+    "negative path": ("negative path",),
+    "preservation path": ("preservation path",),
+    "failure path": ("failure path",),
+    "RED evidence": ("red evidence", " red ", "red→green", "red -> green"),
+    "GREEN evidence": ("green evidence", " green ", "red→green", "red -> green"),
+    "Independent Oracle": (
+        "independent oracle",
+        "oracle result",
+        "oracle unavailable:",
+    ),
+}
 
 
 def read(path: Path) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
-def checked(text: str, label: str) -> bool:
-    return f"- [x] {label}" in text.lower() or f"- [X] {label}" in text
+def infer_mode(loop: str) -> str:
+    match = re.search(
+        r"## Classification\s+[`*]*\s*(tiny|standard|critical)\b",
+        loop,
+        re.I,
+    )
+    return match.group(1).lower() if match else "standard"
 
 
-def main() -> int:
-    root = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("root", nargs="?", default=".")
+    parser.add_argument("--mode", choices=sorted(MODE_REQUIREMENTS))
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="fail on any contract or behavioral issue, not only low score",
+    )
+    parser.add_argument("--json", action="store_true", dest="as_json")
+    return parser.parse_args()
+
+
+def evaluate(root: Path, requested_mode: str | None, strict: bool) -> dict:
+    root = root.resolve()
     loop_dir = root / ".hermes-loop"
     if not loop_dir.exists():
-        # examples may store files at root for readability
         loop_dir = root
-
-    issues: list[str] = []
-    score = 0
-    max_score = 0
 
     loop = read(loop_dir / "LOOP.md")
     handoff = read(loop_dir / "HANDOFF.md")
     review = read(loop_dir / "REVIEW.md")
     features_path = loop_dir / "FEATURES.json"
+    mode = requested_mode or infer_mode(loop)
+
+    issues: list[str] = []
+    score = 0
+    max_score = 0
 
     max_score += len(REQUIRED_LOOP_SECTIONS)
     for section in REQUIRED_LOOP_SECTIONS:
@@ -63,7 +100,11 @@ def main() -> int:
     else:
         issues.append("LOOP.md Done When has no checkbox conditions")
 
-    if EVIDENCE_HEADER in loop and re.search(r"\|\s*[^|]+\s*\|\s*`?[^|`]+`?\s*\|\s*(pass|ok|success|fail|blocked|skipped)", loop, re.I):
+    if EVIDENCE_HEADER in loop and re.search(
+        r"\|\s*[^|]+\s*\|\s*`?[^|`]+`?\s*\|\s*(pass|ok|success|fail|blocked|skipped)",
+        loop,
+        re.I,
+    ):
         score += 1
     else:
         issues.append("LOOP.md Evidence Log has no concrete command/check result")
@@ -87,7 +128,9 @@ def main() -> int:
             score += 1
         else:
             issues.append(f"REVIEW.md unchecked fake-done item: {label}")
-    if "## Verdict" in review and re.search(r"## Verdict\s+(pass|needs-fix|blocked)", review, re.I):
+    if "## Verdict" in review and re.search(
+        r"## Verdict\s+(pass|needs-fix|blocked)", review, re.I
+    ):
         score += 1
     else:
         issues.append("REVIEW.md missing verdict")
@@ -96,41 +139,81 @@ def main() -> int:
         max_score += 1
         try:
             data = json.loads(features_path.read_text(encoding="utf-8"))
-            if isinstance(data, list) and all("passes" in item for item in data if isinstance(item, dict)):
+            if isinstance(data, list) and all(
+                "passes" in item for item in data if isinstance(item, dict)
+            ):
                 score += 1
             else:
                 issues.append("FEATURES.json must be a list with passes fields")
         except Exception as exc:
             issues.append(f"FEATURES.json invalid JSON: {exc}")
 
-    # Secret scan text files in the loop directory.
+    combined = "\n".join([loop, handoff, review]).lower()
+    behavioral_passed = 0
+    behavioral_required = 0
+    if mode == "critical":
+        behavioral_required = len(BEHAVIORAL_GATES)
+        max_score += behavioral_required
+        for label, needles in BEHAVIORAL_GATES.items():
+            if any(needle.lower() in combined for needle in needles):
+                score += 1
+                behavioral_passed += 1
+            else:
+                issues.append(f"critical evidence missing: {label}")
+
     max_score += 1
-    secret_hits = []
-    for path in loop_dir.rglob("*"):
-        if not path.is_file() or path.stat().st_size > 1_000_000:
-            continue
-        try:
-            text = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            continue
-        for pattern in SECRET_PATTERNS:
-            if pattern.search(text):
+    secret_hits: list[str] = []
+    if loop_dir.exists():
+        for path in loop_dir.rglob("*"):
+            if not path.is_file() or path.stat().st_size > 1_000_000:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            if any(pattern.search(text) for pattern in SECRET_PATTERNS):
                 secret_hits.append(str(path.relative_to(loop_dir)))
     if secret_hits:
         issues.append("possible secrets found: " + ", ".join(secret_hits))
     else:
         score += 1
 
-    ratio = score / max_score if max_score else 0
-    print(f"Score: {score}/{max_score} ({ratio:.0%})")
-    if issues:
-        print("Issues:")
-        for issue in issues:
-            print(f"- {issue}")
+    ratio = score / max_score if max_score else 0.0
+    passed = ratio >= 0.8 and not secret_hits
+    if strict and issues:
+        passed = False
 
-    if ratio < 0.8 or any("possible secrets" in item for item in issues):
-        return 1
-    return 0
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "root": str(root),
+        "mode": mode,
+        "strict": strict,
+        "score": score,
+        "max_score": max_score,
+        "ratio": round(ratio, 6),
+        "behavioral_gates_passed": behavioral_passed,
+        "behavioral_gates_required": behavioral_required,
+        "issues": issues,
+        "secret_hits": secret_hits,
+        "passed": passed,
+    }
+
+
+def main() -> int:
+    args = parse_args()
+    result = evaluate(Path(args.root), args.mode, args.strict)
+    if args.as_json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(
+            f"Score: {result['score']}/{result['max_score']} "
+            f"({result['ratio']:.0%}) mode={result['mode']}"
+        )
+        if result["issues"]:
+            print("Issues:")
+            for issue in result["issues"]:
+                print(f"- {issue}")
+    return 0 if result["passed"] else 1
 
 
 if __name__ == "__main__":
